@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from .model import ImageInspector
+from .report import inspect_folder, save_csv, summarize
 
 
 def _cmd_train(args: argparse.Namespace) -> int:
@@ -51,6 +52,36 @@ def _cmd_predict(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_scan(args: argparse.Namespace) -> int:
+    if not Path(args.model).exists():
+        print(f"모델 파일이 없습니다: {args.model}", file=sys.stderr)
+        return 1
+    inspector = ImageInspector.load(args.model)
+
+    print(f"[일괄 검사] 폴더: {args.folder}")
+    results = inspect_folder(inspector, args.folder, recursive=not args.no_recursive)
+    if not results:
+        print("검사할 이미지를 찾지 못했습니다.", file=sys.stderr)
+        return 1
+
+    for row in results:
+        if row["error"]:
+            print(f"  [오류] {row['path']}: {row['error']}")
+        else:
+            conf = row["confidences"].get(row["label"], 0)
+            print(f"  {row['path']}  ->  [{row['label']}] ({conf * 100:.1f}%)")
+
+    stats = summarize(results)
+    summary = ", ".join(f"{name} {count}장" for name, count in stats["counts"].items())
+    print(f"\n[요약] 총 {stats['total']}장  |  {summary}"
+          + (f"  |  오류 {stats['errors']}장" if stats["errors"] else ""))
+
+    if args.csv:
+        save_csv(results, args.csv, inspector.class_names)
+        print(f"[저장] 결과 CSV: {args.csv}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="inspector",
@@ -69,6 +100,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_pred.add_argument("model", help="학습한 모델 파일 (예: model.joblib)")
     p_pred.add_argument("images", nargs="+", help="판별할 이미지 파일들")
     p_pred.set_defaults(func=_cmd_predict)
+
+    p_scan = sub.add_parser("scan", help="폴더 안 이미지를 통째로 일괄 검사")
+    p_scan.add_argument("model", help="학습한 모델 파일 (예: model.joblib)")
+    p_scan.add_argument("folder", help="검사할 이미지들이 들어있는 폴더")
+    p_scan.add_argument("--csv", help="결과를 저장할 CSV 파일 경로 (예: 결과.csv)")
+    p_scan.add_argument("--no-recursive", action="store_true", help="하위 폴더는 검사하지 않음")
+    p_scan.set_defaults(func=_cmd_scan)
 
     return parser
 

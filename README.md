@@ -29,6 +29,8 @@ python gui.py
 2. **[2. 이미지 열기]** 클릭 → 검사할 이미지 선택
 3. 화면에 **이미지 + 판정 결과(양품/불량)** 와 각 분류의 **확신도 막대**가 표시됩니다.
    (양품=초록, 불량=빨강)
+4. **[3. 폴더 일괄 검사]** 클릭 → 폴더 선택 → 폴더 안의 모든 이미지를 한꺼번에 검사하고
+   결과가 표로 나옵니다. **[결과 CSV 저장]** 으로 엑셀용 파일로 저장할 수 있습니다.
 
 > 처음이라면 먼저 `python make_sample_data.py` 로 샘플 이미지를 만든 뒤
 > GUI 에서 `data/train` 폴더로 학습해 보세요.
@@ -86,6 +88,28 @@ python -m inspector predict model.joblib 검사할이미지.jpg
 python -m inspector predict model.joblib a.jpg b.jpg c.jpg
 ```
 
+### 폴더 통째로 일괄 검사 + 결과 저장
+
+폴더 안의 모든 이미지(하위 폴더 포함)를 한 번에 검사하고, 결과를 CSV 로 저장합니다.
+
+```bash
+python -m inspector scan model.joblib data/test --csv 검사결과.csv
+```
+
+출력 예시:
+
+```
+  data/test/ng/ng_000.png  ->  [ng] (74.0%)
+  ...
+[요약] 총 16장  |  ng 8장, ok 8장
+[저장] 결과 CSV: 검사결과.csv
+```
+
+저장된 `검사결과.csv` 는 엑셀에서 바로 열립니다(한글 깨짐 방지). 열 구성:
+`파일명, 경로, 판정, 분류별 확신도(%), 오류`
+
+> 하위 폴더는 빼고 검사하려면 `--no-recursive` 를 붙이세요.
+
 ## 4. 명령어 옵션
 
 | 명령 | 설명 |
@@ -94,6 +118,8 @@ python -m inspector predict model.joblib a.jpg b.jpg c.jpg
 | `train ... --size 96` | 이미지 축소 크기 조절 (클수록 정확·느림, 기본 64) |
 | `train ... --trees 300` | 랜덤포레스트 트리 수 (기본 200) |
 | `predict <모델> <이미지...>` | 학습한 모델로 이미지 판별 |
+| `scan <모델> <폴더> [--csv 파일]` | 폴더 안 이미지 일괄 검사 + CSV 저장 |
+| `scan ... --no-recursive` | 하위 폴더는 검사하지 않음 |
 
 ## 5. 파이썬 코드에서 직접 쓰기
 
@@ -116,7 +142,9 @@ print(label, confidences)   # 예: ng {'ng': 0.74, 'ok': 0.26}
 1. **특징 추출** (`inspector/dataset.py`) — 이미지를 숫자 벡터로 변환
    - 흑백 축소 픽셀(모양) + 색상 히스토그램(색 분포) + 밝기 통계
 2. **학습/판별** (`inspector/model.py`) — 랜덤포레스트 분류기
-3. **명령줄** (`inspector/__main__.py`) — `train` / `predict`
+3. **일괄 검사/저장** (`inspector/report.py`) — 폴더 검사 · CSV 저장
+4. **명령줄** (`inspector/__main__.py`) — `train` / `predict` / `scan`
+5. **그래픽 화면** (`gui.py`) — Tkinter GUI
 
 ## 7. 폴더 구조
 
@@ -126,7 +154,9 @@ print(label, confidences)   # 예: ng {'ng': 0.74, 'ok': 0.26}
 │   ├── __init__.py
 │   ├── dataset.py      # 이미지 로딩 · 특징 추출
 │   ├── model.py        # 학습 · 저장 · 판별
-│   └── __main__.py     # 명령줄 인터페이스
+│   ├── report.py       # 폴더 일괄 검사 · CSV 저장
+│   └── __main__.py     # 명령줄 인터페이스 (train/predict/scan)
+├── gui.py              # 그래픽 화면(GUI)
 ├── make_sample_data.py # 데모용 샘플 이미지 생성
 ├── requirements.txt
 └── README.md

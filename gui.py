@@ -23,7 +23,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from inspector import ImageInspector
+from inspector import ImageInspector, inspect_folder, save_csv, summarize
 
 # 화면에 이미지를 표시할 때의 최대 크기(px)
 PREVIEW_SIZE = 360
@@ -48,10 +48,11 @@ class InspectorApp:
         self.root = root
         self.inspector: ImageInspector | None = None
         self.current_photo = None  # ImageTk 참조 유지용 (GC 방지)
+        self.batch_results: list[dict] = []  # 마지막 일괄 검사 결과 (CSV 저장용)
 
         root.title("이미지 검사기")
-        root.geometry("560x680")
-        root.minsize(480, 600)
+        root.geometry("640x760")
+        root.minsize(560, 680)
 
         self._build_ui()
 
@@ -72,6 +73,7 @@ class InspectorApp:
         ttk.Button(top, text="1. 모델 학습", command=self.on_train).pack(side="left", padx=4)
         ttk.Button(top, text="모델 불러오기", command=self.on_load_model).pack(side="left", padx=4)
         ttk.Button(top, text="2. 이미지 열기", command=self.on_open_image).pack(side="left", padx=4)
+        ttk.Button(top, text="3. 폴더 일괄 검사", command=self.on_scan_folder).pack(side="left", padx=4)
 
         # 모델 상태 표시
         self.model_var = tk.StringVar(value="모델: 없음 (먼저 학습하거나 불러오세요)")
@@ -102,6 +104,37 @@ class InspectorApp:
         # 확신도 막대들이 들어갈 영역
         self.conf_frame = ttk.Frame(self.root)
         self.conf_frame.pack(fill="x", padx=24, pady=6)
+
+        # 폴더 일괄 검사 결과 영역
+        batch = ttk.LabelFrame(self.root, text="폴더 일괄 검사 결과")
+        batch.pack(fill="both", expand=True, padx=12, pady=6)
+
+        bar = ttk.Frame(batch)
+        bar.pack(fill="x", padx=6, pady=4)
+        self.batch_summary_var = tk.StringVar(value="아직 검사한 폴더가 없습니다.")
+        ttk.Label(bar, textvariable=self.batch_summary_var).pack(side="left")
+        self.save_csv_btn = ttk.Button(bar, text="결과 CSV 저장", command=self.on_save_csv, state="disabled")
+        self.save_csv_btn.pack(side="right")
+
+        table_wrap = ttk.Frame(batch)
+        table_wrap.pack(fill="both", expand=True, padx=6, pady=4)
+        self.tree = ttk.Treeview(
+            table_wrap, columns=("file", "label", "conf"), show="headings", height=8
+        )
+        self.tree.heading("file", text="파일명")
+        self.tree.heading("label", text="판정")
+        self.tree.heading("conf", text="확신도")
+        self.tree.column("file", width=280)
+        self.tree.column("label", width=80, anchor="center")
+        self.tree.column("conf", width=80, anchor="center")
+        scroll = ttk.Scrollbar(table_wrap, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+        # 판정별 행 색상
+        self.tree.tag_configure("good", foreground="#1a9850")
+        self.tree.tag_configure("bad", foreground="#d73027")
+        self.tree.tag_configure("err", foreground="#999999")
 
         # 하단 상태줄
         self.status_var = tk.StringVar(value="준비됨")
@@ -211,6 +244,90 @@ class InspectorApp:
         self.result_label.config(fg=color_for(label))
         self._show_confidences(confidences, best=label)
         self.status_var.set(f"검사 완료: {Path(path).name}")
+
+    # ------------------------------------------------------------------ #
+    # 폴더 일괄 검사 & CSV 저장
+    # ------------------------------------------------------------------ #
+    def on_scan_folder(self):
+        if self.inspector is None:
+            messagebox.showwarning(
+                "모델 없음",
+                "먼저 [1. 모델 학습] 하거나 [모델 불러오기] 로 모델을 준비하세요.",
+            )
+            return
+
+        folder = filedialog.askdirectory(title="일괄 검사할 이미지 폴더 선택")
+        if not folder:
+            return
+
+        self.status_var.set("일괄 검사 중... 잠시 기다려 주세요")
+        self.save_csv_btn.config(state="disabled")
+        self.root.update_idletasks()
+
+        def work():
+            try:
+                results = inspect_folder(self.inspector, folder)
+            except Exception as exc:  # noqa: BLE001
+                self.root.after(0, lambda: self._scan_failed(exc))
+                return
+            self.root.after(0, lambda: self._scan_done(results))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _scan_done(self, results: list[dict]):
+        self.batch_results = results
+
+        # 표 채우기
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for row in results:
+            if row["error"]:
+                self.tree.insert("", "end", values=(Path(row["path"]).name, "오류", "-"), tags=("err",))
+                continue
+            conf = row["confidences"].get(row["label"], 0)
+            tag = "good" if color_for(row["label"]) == "#1a9850" else (
+                "bad" if color_for(row["label"]) == "#d73027" else ""
+            )
+            self.tree.insert(
+                "", "end",
+                values=(Path(row["path"]).name, row["label"], f"{conf * 100:.1f}%"),
+                tags=(tag,) if tag else (),
+            )
+
+        if not results:
+            self.batch_summary_var.set("검사할 이미지를 찾지 못했습니다.")
+            self.status_var.set("일괄 검사: 이미지 없음")
+            return
+
+        stats = summarize(results)
+        summary = ", ".join(f"{name} {count}장" for name, count in stats["counts"].items())
+        extra = f"  (오류 {stats['errors']}장)" if stats["errors"] else ""
+        self.batch_summary_var.set(f"총 {stats['total']}장 → {summary}{extra}")
+        self.save_csv_btn.config(state="normal")
+        self.status_var.set("일괄 검사 완료 — [결과 CSV 저장] 으로 저장할 수 있습니다")
+
+    def _scan_failed(self, exc: Exception):
+        self.status_var.set("일괄 검사 실패")
+        messagebox.showerror("일괄 검사 실패", str(exc))
+
+    def on_save_csv(self):
+        if not self.batch_results:
+            return
+        path = filedialog.asksaveasfilename(
+            title="결과 CSV 저장",
+            defaultextension=".csv",
+            initialfile="검사결과.csv",
+            filetypes=[("CSV 파일", "*.csv"), ("모든 파일", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            save_csv(self.batch_results, path, self.inspector.class_names)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("저장 실패", str(exc))
+            return
+        self.status_var.set(f"CSV 저장 완료: {path}")
+        messagebox.showinfo("저장 완료", f"결과를 저장했습니다:\n{path}")
 
     def _show_confidences(self, confidences: dict, best: str):
         # 기존 막대 지우기

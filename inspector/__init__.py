@@ -4,8 +4,17 @@
 (예: 양품/불량) 판별하는 간단한 이미지 검사기입니다.
 """
 
-from .dataset import load_dataset, image_to_features
+from .dataset import find_images, image_to_features, load_dataset
 from .model import ImageInspector
+from .report import inspect_folder, save_csv, summarize
 
-__all__ = ["load_dataset", "image_to_features", "ImageInspector"]
-__version__ = "0.1.0"
+__all__ = [
+    "load_dataset",
+    "image_to_features",
+    "find_images",
+    "ImageInspector",
+    "inspect_folder",
+    "summarize",
+    "save_csv",
+]
+__version__ = "0.2.0"

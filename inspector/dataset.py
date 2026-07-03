@@ -65,6 +65,21 @@ def _iter_image_paths(folder: Path):
             yield entry
 
 
+def find_images(folder: str | Path, recursive: bool = True) -> list[Path]:
+    """폴더 안의 모든 이미지 파일 경로를 찾아 정렬해서 돌려준다.
+
+    recursive=True 이면 하위 폴더까지 모두 뒤진다.
+    """
+    folder = Path(folder)
+    if not folder.is_dir():
+        raise FileNotFoundError(f"폴더를 찾을 수 없습니다: {folder}")
+    pattern = "**/*" if recursive else "*"
+    return sorted(
+        p for p in folder.glob(pattern)
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    )
+
+
 def load_dataset(root: str | Path, size: int = DEFAULT_SIZE):
     """학습 폴더를 읽어 (X, y, class_names) 를 만든다.
 
