@@ -1,0 +1,9 @@
+# 파이썬
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 학습 데이터 / 모델 (용량이 커서 저장소에 넣지 않음)
+data/
+*.joblib
