@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from .model import ImageInspector
-from .report import inspect_folder, save_csv, summarize
+from .report import export_results, inspect_folder, save_csv, summarize
 
 
 def _cmd_train(args: argparse.Namespace) -> int:
@@ -82,6 +82,41 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_export(args: argparse.Namespace) -> int:
+    if not Path(args.model).exists():
+        print(f"모델 파일이 없습니다: {args.model}", file=sys.stderr)
+        return 1
+    inspector = ImageInspector.load(args.model)
+
+    print(f"[결과 정리] 폴더: {args.folder}  ->  {args.output}")
+
+    def progress(done, total, message):
+        print(f"  ... {message}")
+
+    stats = export_results(
+        inspector,
+        args.folder,
+        args.output,
+        recursive=not args.no_recursive,
+        make_heatmap=not args.no_heatmap,
+        heatmap_all=args.heatmap_all,
+        defect_class=args.defect_class,
+        grid=args.grid,
+        progress=progress,
+    )
+
+    summary = ", ".join(f"{name} {count}장" for name, count in stats["counts"].items())
+    print(f"\n[요약] 총 {stats['total']}장  |  {summary}")
+    if stats["defect_classes"]:
+        print(f"  - 불량 분류    : {', '.join(stats['defect_classes'])}")
+    else:
+        print("  - 불량 분류    : (자동 판단 불가 → --defect-class 로 지정하세요)")
+    print(f"  - 불량 이미지  : {stats['ng_copied']}장  ->  {stats['ng_dir']}")
+    print(f"  - 히트맵 생성  : {stats['heatmaps']}장  ->  {stats['heat_dir']}")
+    print(f"  - 결과 CSV     : {stats['csv']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="inspector",
@@ -107,6 +142,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--csv", help="결과를 저장할 CSV 파일 경로 (예: 결과.csv)")
     p_scan.add_argument("--no-recursive", action="store_true", help="하위 폴더는 검사하지 않음")
     p_scan.set_defaults(func=_cmd_scan)
+
+    p_export = sub.add_parser(
+        "export", help="폴더 검사 후 불량 이미지 수집 + 히트맵 + CSV 를 결과 폴더에 저장"
+    )
+    p_export.add_argument("model", help="학습한 모델 파일 (예: model.joblib)")
+    p_export.add_argument("folder", help="검사할 이미지 폴더")
+    p_export.add_argument("-o", "--output", default="검사결과", help="결과를 저장할 폴더")
+    p_export.add_argument("--no-heatmap", action="store_true", help="히트맵을 만들지 않음")
+    p_export.add_argument("--heatmap-all", action="store_true", help="불량뿐 아니라 모든 이미지 히트맵 생성")
+    p_export.add_argument("--defect-class", help="불량으로 볼 분류 이름 (미지정 시 자동 판단)")
+    p_export.add_argument("--grid", type=int, default=10, help="히트맵 격자 세밀도 (기본 10)")
+    p_export.add_argument("--no-recursive", action="store_true", help="하위 폴더는 검사하지 않음")
+    p_export.set_defaults(func=_cmd_export)
 
     return parser
 

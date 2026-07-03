@@ -31,6 +31,8 @@ python gui.py
    (양품=초록, 불량=빨강)
 4. **[3. 폴더 일괄 검사]** 클릭 → 폴더 선택 → 폴더 안의 모든 이미지를 한꺼번에 검사하고
    결과가 표로 나옵니다. **[결과 CSV 저장]** 으로 엑셀용 파일로 저장할 수 있습니다.
+5. **[4. 불량 모으기+히트맵]** 클릭 → 검사할 폴더와 저장할 폴더 선택 →
+   **불량 이미지를 따로 모으고**, **불량 판정 근거를 표시한 히트맵**까지 만들어 저장합니다.
 
 > 처음이라면 먼저 `python make_sample_data.py` 로 샘플 이미지를 만든 뒤
 > GUI 에서 `data/train` 폴더로 학습해 보세요.
@@ -110,6 +112,32 @@ python -m inspector scan model.joblib data/test --csv 검사결과.csv
 
 > 하위 폴더는 빼고 검사하려면 `--no-recursive` 를 붙이세요.
 
+### 불량 이미지 모으기 + 히트맵 (결과 폴더 정리)
+
+폴더를 검사해서 **불량 이미지를 따로 모으고**, 각 불량이 **왜 불량인지**를
+빨갛게 표시한 **히트맵**까지 한 번에 만들어 결과 폴더에 정리합니다.
+
+```bash
+python -m inspector export model.joblib data/test -o 검사결과
+```
+
+만들어지는 폴더 구조:
+
+```
+검사결과/
+├── 불량/          ← 불량으로 판정된 원본 이미지 복사본
+├── 히트맵/        ← 불량 판정 근거를 빨갛게 표시한 히트맵 이미지
+└── 검사결과.csv   ← 전체 결과 요약표
+```
+
+- 히트맵은 **occlusion(가림) 민감도** 방식입니다. 이미지를 조금씩 가려 보며
+  불량 확신도가 크게 떨어지는 부위(=불량의 근거)를 찾아 빨갛게 칠합니다.
+- 옵션:
+  - `--heatmap-all` : 불량뿐 아니라 **모든 이미지** 히트맵 생성
+  - `--no-heatmap` : 히트맵 없이 불량 수집 + CSV 만
+  - `--defect-class ng` : 불량으로 볼 분류 이름 직접 지정(자동 판단이 안 될 때)
+  - `--grid 14` : 히트맵 세밀도(클수록 정밀·느림, 기본 10)
+
 ## 4. 명령어 옵션
 
 | 명령 | 설명 |
@@ -120,6 +148,9 @@ python -m inspector scan model.joblib data/test --csv 검사결과.csv
 | `predict <모델> <이미지...>` | 학습한 모델로 이미지 판별 |
 | `scan <모델> <폴더> [--csv 파일]` | 폴더 안 이미지 일괄 검사 + CSV 저장 |
 | `scan ... --no-recursive` | 하위 폴더는 검사하지 않음 |
+| `export <모델> <폴더> -o <결과폴더>` | 불량 이미지 모으기 + 히트맵 + CSV |
+| `export ... --heatmap-all` | 모든 이미지 히트맵 생성 |
+| `export ... --defect-class ng` | 불량으로 볼 분류 직접 지정 |
 
 ## 5. 파이썬 코드에서 직접 쓰기
 
@@ -142,9 +173,10 @@ print(label, confidences)   # 예: ng {'ng': 0.74, 'ok': 0.26}
 1. **특징 추출** (`inspector/dataset.py`) — 이미지를 숫자 벡터로 변환
    - 흑백 축소 픽셀(모양) + 색상 히스토그램(색 분포) + 밝기 통계
 2. **학습/판별** (`inspector/model.py`) — 랜덤포레스트 분류기
-3. **일괄 검사/저장** (`inspector/report.py`) — 폴더 검사 · CSV 저장
-4. **명령줄** (`inspector/__main__.py`) — `train` / `predict` / `scan`
-5. **그래픽 화면** (`gui.py`) — Tkinter GUI
+3. **일괄 검사/저장** (`inspector/report.py`) — 폴더 검사 · 불량 수집 · CSV
+4. **히트맵** (`inspector/heatmap.py`) — occlusion 민감도로 불량 근거 시각화
+5. **명령줄** (`inspector/__main__.py`) — `train` / `predict` / `scan` / `export`
+6. **그래픽 화면** (`gui.py`) — Tkinter GUI
 
 ## 7. 폴더 구조
 
@@ -154,8 +186,9 @@ print(label, confidences)   # 예: ng {'ng': 0.74, 'ok': 0.26}
 │   ├── __init__.py
 │   ├── dataset.py      # 이미지 로딩 · 특징 추출
 │   ├── model.py        # 학습 · 저장 · 판별
-│   ├── report.py       # 폴더 일괄 검사 · CSV 저장
-│   └── __main__.py     # 명령줄 인터페이스 (train/predict/scan)
+│   ├── report.py       # 폴더 일괄 검사 · 불량 수집 · CSV
+│   ├── heatmap.py      # 불량 근거 히트맵 생성
+│   └── __main__.py     # 명령줄 인터페이스 (train/predict/scan/export)
 ├── gui.py              # 그래픽 화면(GUI)
 ├── make_sample_data.py # 데모용 샘플 이미지 생성
 ├── requirements.txt

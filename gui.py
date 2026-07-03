@@ -23,7 +23,13 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from inspector import ImageInspector, inspect_folder, save_csv, summarize
+from inspector import (
+    ImageInspector,
+    export_results,
+    inspect_folder,
+    save_csv,
+    summarize,
+)
 
 # 화면에 이미지를 표시할 때의 최대 크기(px)
 PREVIEW_SIZE = 360
@@ -74,6 +80,7 @@ class InspectorApp:
         ttk.Button(top, text="모델 불러오기", command=self.on_load_model).pack(side="left", padx=4)
         ttk.Button(top, text="2. 이미지 열기", command=self.on_open_image).pack(side="left", padx=4)
         ttk.Button(top, text="3. 폴더 일괄 검사", command=self.on_scan_folder).pack(side="left", padx=4)
+        ttk.Button(top, text="4. 불량 모으기+히트맵", command=self.on_export).pack(side="left", padx=4)
 
         # 모델 상태 표시
         self.model_var = tk.StringVar(value="모델: 없음 (먼저 학습하거나 불러오세요)")
@@ -328,6 +335,63 @@ class InspectorApp:
             return
         self.status_var.set(f"CSV 저장 완료: {path}")
         messagebox.showinfo("저장 완료", f"결과를 저장했습니다:\n{path}")
+
+    # ------------------------------------------------------------------ #
+    # 불량 모으기 + 히트맵 (결과 폴더로 내보내기)
+    # ------------------------------------------------------------------ #
+    def on_export(self):
+        if self.inspector is None:
+            messagebox.showwarning(
+                "모델 없음",
+                "먼저 [1. 모델 학습] 하거나 [모델 불러오기] 로 모델을 준비하세요.",
+            )
+            return
+
+        folder = filedialog.askdirectory(title="검사할 이미지 폴더 선택")
+        if not folder:
+            return
+        out_dir = filedialog.askdirectory(title="결과를 저장할 폴더 선택")
+        if not out_dir:
+            return
+
+        self.status_var.set("검사 + 히트맵 생성 중... (이미지가 많으면 시간이 걸립니다)")
+        self.root.update_idletasks()
+
+        def report_progress(done, total, message):
+            self.root.after(0, lambda: self.status_var.set(f"{message} ({done}/{total})"))
+
+        def work():
+            try:
+                stats = export_results(
+                    self.inspector, folder, out_dir, progress=report_progress
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.root.after(0, lambda: self._export_failed(exc))
+                return
+            self.root.after(0, lambda: self._export_done(stats))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _export_done(self, stats: dict):
+        # 결과 표도 함께 채워 준다
+        self._scan_done(stats["results"])
+
+        defect = ", ".join(stats["defect_classes"]) or "(자동 판단 불가)"
+        msg = (
+            f"결과 폴더: {stats['out_dir']}\n\n"
+            f"불량 분류: {defect}\n"
+            f"불량 이미지: {stats['ng_copied']}장  →  {stats['ng_dir']}\n"
+            f"히트맵: {stats['heatmaps']}장  →  {stats['heat_dir']}\n"
+            f"CSV: {stats['csv']}"
+        )
+        self.status_var.set(
+            f"완료 — 불량 {stats['ng_copied']}장, 히트맵 {stats['heatmaps']}장 저장됨"
+        )
+        messagebox.showinfo("완료", msg)
+
+    def _export_failed(self, exc: Exception):
+        self.status_var.set("불량 모으기 실패")
+        messagebox.showerror("실패", str(exc))
 
     def _show_confidences(self, confidences: dict, best: str):
         # 기존 막대 지우기
